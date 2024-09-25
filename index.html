@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phone Number Tracker</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        #map { height: 400px; }
+    </style>
+</head>
+<body>
+
+<h1>Phone Number Tracker</h1>
+
+<!-- Phone Number Input Form -->
+<form id="phone-form">
+    <label for="phone-number">Enter Phone Number (with country code):</label>
+    <input type="text" id="phone-number" required>
+    <button type="submit">Track Number</button>
+</form>
+
+<div id="result"></div>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+    const map = L.map('map').setView([0, 0], 2); // Initial position at global center
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    let trackedNumber = null;
+    let currentMarker = null; // Store the marker for updating
+
+    document.getElementById('phone-form').addEventListener('submit', function (e) {
+        e.preventDefault(); // Prevent form submission
+        const phoneNumber = document.getElementById('phone-number').value;
+
+        fetch('/track-number', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ number: phoneNumber })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('result').innerText = `Error: ${data.error}`;
+            } else {
+                trackedNumber = phoneNumber; // Store the tracked number
+                document.getElementById('result').innerText = `Location: ${data.location}, Service Provider: ${data.service_provider}`;
+                updateMap(data.latitude, data.longitude);
+                startPolling(); // Start polling for real-time updates
+                getCurrentLocation(); // Get the current GPS location
+            }
+        })
+        .catch(error => console.error('Error:', error));
+    });
+
+    function updateMap(lat, lng) {
+        map.setView([lat, lng], 13); // Center the map on the new location
+        
+        // If there's already a marker, update its position
+        if (currentMarker) {
+            currentMarker.setLatLng([lat, lng]);
+        } else {
+            currentMarker = L.marker([lat, lng]).addTo(map); // Add a marker at the new location
+        }
+    }
+
+    function startPolling() {
+        setInterval(() => {
+            if (trackedNumber) {
+                fetch(`/get-location/${trackedNumber}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.latitude && data.longitude) {
+                        updateMap(data.latitude, data.longitude);
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+            }
+        }, 5000); // Poll every 5 seconds
+    }
+
+    function getCurrentLocation() {
+        if (navigator.geolocation) {
+            navigator.geolocation.watchPosition(position => {
+                const latitude = position.coords.latitude;
+                const longitude = position.coords.longitude;
+                
+                console.log(`Current GPS Location: Latitude: ${latitude}, Longitude: ${longitude}`);
+                
+                // Send the GPS coordinates to the server
+                fetch('/update-location', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        number: trackedNumber,
+                        latitude: latitude,
+                        longitude: longitude
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        console.log('Location updated:', latitude, longitude);
+                    }
+                })
+                .catch(error => console.error('Error:', error));
+            }, error => {
+                console.error('Error getting location:', error);
+            }, {
+                enableHighAccuracy: true,
+                maximumAge: 30000,
+                timeout: 27000
+            });
+        } else {
+            console.error("Geolocation is not supported by this browser.");
+        }
+    }
+</script>
+
+
+</body>
+</html>
